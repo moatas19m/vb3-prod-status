@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Production Status Dashboard</title>
+  <title>VB3 Production Status</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -122,6 +122,7 @@
     button:active { transform: scale(0.97); }
     button.danger { color: #e05252; border-color: #3a2020; }
     button.danger:hover { background: #2a1818; border-color: #5a2020; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
 
     .stats {
       display: flex;
@@ -169,39 +170,89 @@
 
     #standup-box .key { color: #666; font-weight: 600; }
     #standup-box .val { color: #aaa; }
+
+    #sync-status {
+      font-size: 11px;
+      color: #444;
+      margin-top: 1.25rem;
+      min-height: 16px;
+      transition: color 0.3s;
+    }
+
+    #sync-status.syncing { color: #666; }
+    #sync-status.saved   { color: #4caf77; }
+    #sync-status.error   { color: #e05252; }
+
+    .history-toggle {
+      margin-top: 1rem;
+      font-size: 12px;
+      color: #444;
+      cursor: pointer;
+      background: none;
+      border: none;
+      padding: 0;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+
+    #history-box {
+      display: none;
+      margin-top: 0.75rem;
+      padding: 0.75rem 1rem;
+      background: #111;
+      border: 1px solid #2a2a2a;
+      border-radius: 10px;
+      text-align: left;
+      max-height: 180px;
+      overflow-y: auto;
+    }
+
+    .history-entry {
+      font-size: 12px;
+      color: #555;
+      padding: 3px 0;
+      border-bottom: 1px solid #1e1e1e;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .history-entry:last-child { border-bottom: none; }
+    .history-entry .he-action { color: #888; }
+    .history-entry .he-time   { color: #3a3a3a; white-space: nowrap; }
   </style>
 </head>
 <body>
   <div class="card">
-    <p class="eyebrow">production status</p>
+    <p class="eyebrow">vb3 · production status</p>
     <div id="status-label">🔴 EVERYTHING IS FINE</div>
 
     <div class="gremlin" id="gremlin" onclick="gremlinClick()" title="click me">🐛</div>
 
     <div class="counter-wrap">
-      <div id="counter">0</div>
-      <div class="counter-label">bugs introduced today</div>
+      <div id="counter">—</div>
+      <div class="counter-label">bugs introduced · all time</div>
     </div>
 
-    <div id="message">click the bug to see how the day is going</div>
+    <div id="message">loading team damage...</div>
 
     <div class="btn-row">
-      <button onclick="addBug()">➕ ship a feature</button>
-      <button onclick="fixBug()">🔧 fix a bug</button>
-      <button class="danger" onclick="deployProd()">🚀 deploy to prod</button>
+      <button id="btn-feature" onclick="addBug()">➕ ship a feature</button>
+      <button id="btn-fix" onclick="fixBug()">🔧 fix a bug</button>
+      <button id="btn-deploy" class="danger" onclick="deployProd()">🚀 deploy to prod</button>
     </div>
 
     <div class="stats">
       <div class="stat">
-        <div class="stat-num" id="coffee-count">0</div>
+        <div class="stat-num" id="coffee-count">—</div>
         <div class="stat-lbl">coffees consumed</div>
       </div>
       <div class="stat">
-        <div class="stat-num" id="deploy-count">0</div>
+        <div class="stat-num" id="deploy-count">—</div>
         <div class="stat-lbl">reckless deploys</div>
       </div>
       <div class="stat">
-        <div class="stat-num" id="fix-count">0</div>
+        <div class="stat-num" id="fix-count">—</div>
         <div class="stat-lbl">bugs "fixed"</div>
       </div>
     </div>
@@ -211,9 +262,24 @@
     </div>
 
     <div id="standup-box"></div>
+
+    <div id="sync-status">connecting to the void...</div>
+
+    <button class="history-toggle" onclick="toggleHistory()">📜 show history</button>
+    <div id="history-box"></div>
   </div>
 
   <script>
+    const API_KEY  = "$2a$10$ki/P7rowbcPDAdIy775rE.iuiOSBNT4NNT.SDsT48h2qSMUi82hG6";
+    const BIN_KEY  = "X-Master-Key";
+    const BASE_URL = "https://api.jsonbin.io/v3";
+    const BIN_NAME = "vb3-prod-status";
+
+    let binId   = null;
+    let state   = { bugs: 0, coffees: 0, deploys: 0, fixes: 0, history: [] };
+    let saving  = false;
+    let msgIdx  = 0;
+
     const msgs = [
       "it's not a bug, it's an undocumented feature with strong opinions.",
       "the tests are passing. the tests are definitely passing. don't check.",
@@ -233,30 +299,45 @@
     ];
 
     const statuses = [
-      ["🟢 totally fine", "#4caf77"],
-      ["🟡 probably fine", "#e0a040"],
+      ["🟢 totally fine",       "#4caf77"],
+      ["🟡 probably fine",      "#e0a040"],
       ["🔴 EVERYTHING IS FINE", "#e05252"],
-      ["☣️ send help", "#e05252"],
-      ["💀 we're in prod", "#e05252"],
+      ["☣️ send help",          "#e05252"],
+      ["💀 we're in prod",      "#e05252"],
     ];
 
     const standups = [
-      ["Yesterday", "moved a div 3px to the left for 6 hours.", "Today", "will move it 3px to the right and call it a feature.", "Blockers", "my own hubris."],
-      ["Yesterday", "pushed to main. worked fine locally.", "Today", "production is on fire, will investigate.", "Blockers", "production is on fire."],
-      ["Yesterday", "attended 4 meetings about meetings.", "Today", "attending a meeting to reduce meetings.", "Blockers", "meetings."],
-      ["Yesterday", "wrote 300 lines of code.", "Today", "deleted 290 of them.", "Blockers", "the 10 lines i kept."],
-      ["Yesterday", "fixed a bug from 2019.", "Today", "introduced 3 bugs that are 2019's fault somehow.", "Blockers", "time itself."],
+      ["Yesterday","moved a div 3px to the left for 6 hours.","Today","will move it 3px to the right and call it a feature.","Blockers","my own hubris."],
+      ["Yesterday","pushed to main. worked fine locally.","Today","production is on fire, will investigate.","Blockers","production is on fire."],
+      ["Yesterday","attended 4 meetings about meetings.","Today","attending a meeting to reduce meetings.","Blockers","meetings."],
+      ["Yesterday","wrote 300 lines of code.","Today","deleted 290 of them.","Blockers","the 10 lines i kept."],
+      ["Yesterday","fixed a bug from 2019.","Today","introduced 3 bugs that are 2019's fault somehow.","Blockers","time itself."],
     ];
 
-    let bugs = 0, coffees = 0, deploys = 0, fixes = 0, msgIdx = 0;
+    function setSyncStatus(text, cls) {
+      const el = document.getElementById('sync-status');
+      el.textContent = text;
+      el.className = cls || '';
+    }
 
-    function updateStatus() {
-      const el = document.getElementById('status-label');
-      const counter = document.getElementById('counter');
-      const idx = Math.min(Math.floor(bugs / 3), statuses.length - 1);
-      el.textContent = statuses[idx][0];
-      el.style.color = statuses[idx][1];
-      counter.className = bugs >= 5 ? 'high' : '';
+    function setButtons(disabled) {
+      ['btn-feature','btn-fix','btn-deploy'].forEach(id => {
+        document.getElementById(id).disabled = disabled;
+      });
+    }
+
+    function renderState() {
+      document.getElementById('counter').textContent      = state.bugs;
+      document.getElementById('coffee-count').textContent = state.coffees;
+      document.getElementById('deploy-count').textContent = state.deploys;
+      document.getElementById('fix-count').textContent    = state.fixes;
+
+      const statusEl  = document.getElementById('status-label');
+      const counterEl = document.getElementById('counter');
+      const idx = Math.min(Math.floor(state.bugs / 3), statuses.length - 1);
+      statusEl.textContent  = statuses[idx][0];
+      statusEl.style.color  = statuses[idx][1];
+      counterEl.className   = state.bugs >= 5 ? 'high' : '';
     }
 
     function showMsg(text) {
@@ -265,10 +346,119 @@
       setTimeout(() => { el.textContent = text; el.style.opacity = '1'; }, 150);
     }
 
+    function logHistory(action) {
+      if (!state.history) state.history = [];
+      state.history.unshift({ action, ts: new Date().toISOString() });
+      if (state.history.length > 50) state.history = state.history.slice(0, 50);
+    }
+
+    function renderHistory() {
+      const box = document.getElementById('history-box');
+      if (!state.history || state.history.length === 0) {
+        box.innerHTML = '<div class="history-entry"><span class="he-action">no history yet</span></div>';
+        return;
+      }
+      box.innerHTML = state.history.map(e => {
+        const d   = new Date(e.ts);
+        const fmt = d.toLocaleDateString([], {month:'short',day:'numeric'})
+                  + ' ' + d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+        return `<div class="history-entry"><span class="he-action">${e.action}</span><span class="he-time">${fmt}</span></div>`;
+      }).join('');
+    }
+
+    function toggleHistory() {
+      const box = document.getElementById('history-box');
+      const btn = document.querySelector('.history-toggle');
+      if (box.style.display === 'block') {
+        box.style.display = 'none';
+        btn.textContent = '📜 show history';
+      } else {
+        renderHistory();
+        box.style.display = 'block';
+        btn.textContent = '📜 hide history';
+      }
+    }
+
+    // ── JSONBin helpers ──────────────────────────────────────────
+
+    async function findOrCreateBin() {
+      // list bins and find ours by name
+      const listRes = await fetch(`${BASE_URL}/b`, {
+        headers: { [BIN_KEY]: API_KEY }
+      });
+      if (listRes.ok) {
+        const list = await listRes.json();
+        const found = (list || []).find(b => b.snippetMeta && b.snippetMeta.name === BIN_NAME);
+        if (found) return found.snippetMeta.id;
+      }
+
+      // create it
+      const createRes = await fetch(`${BASE_URL}/b`, {
+        method: 'POST',
+        headers: {
+          [BIN_KEY]: API_KEY,
+          'Content-Type': 'application/json',
+          'X-Bin-Name': BIN_NAME,
+          'X-Bin-Private': 'false'
+        },
+        body: JSON.stringify(state)
+      });
+      if (!createRes.ok) throw new Error('could not create bin');
+      const created = await createRes.json();
+      return created.metadata.id;
+    }
+
+    async function loadState() {
+      setSyncStatus('loading team chaos...', 'syncing');
+      setButtons(true);
+      try {
+        binId = await findOrCreateBin();
+        const res = await fetch(`${BASE_URL}/b/${binId}/latest`, {
+          headers: { [BIN_KEY]: API_KEY }
+        });
+        if (!res.ok) throw new Error('read failed');
+        const data = await res.json();
+        state = { bugs:0, coffees:0, deploys:0, fixes:0, history:[], ...data.record };
+        renderState();
+        setSyncStatus('synced with the team ✓', 'saved');
+        setTimeout(() => setSyncStatus(''), 2000);
+      } catch (e) {
+        setSyncStatus('could not connect — running offline', 'error');
+      }
+      setButtons(false);
+      showMsg('click the bug to see how the day is going');
+    }
+
+    async function saveState() {
+      if (!binId || saving) return;
+      saving = true;
+      setSyncStatus('saving...', 'syncing');
+      try {
+        const res = await fetch(`${BASE_URL}/b/${binId}`, {
+          method: 'PUT',
+          headers: {
+            [BIN_KEY]: API_KEY,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(state)
+        });
+        if (!res.ok) throw new Error('write failed');
+        setSyncStatus('saved ✓', 'saved');
+        setTimeout(() => setSyncStatus(''), 1500);
+      } catch (e) {
+        setSyncStatus('save failed — changes may be lost', 'error');
+      }
+      saving = false;
+    }
+
+    // ── Actions ──────────────────────────────────────────────────
+
     function gremlinClick() {
       const g = document.getElementById('gremlin');
-      coffees++;
-      document.getElementById('coffee-count').textContent = coffees;
+      state.coffees++;
+      logHistory('☕ drank a coffee');
+      renderState();
+      saveState();
       g.classList.add('angry');
       g.textContent = ['🐛','🦗','🪲','💀','🤡'][Math.floor(Math.random() * 5)];
       setTimeout(() => { g.classList.remove('angry'); g.textContent = '🐛'; }, 800);
@@ -276,18 +466,19 @@
     }
 
     function addBug() {
-      bugs++;
-      document.getElementById('counter').textContent = bugs;
-      updateStatus();
+      state.bugs++;
+      logHistory('➕ shipped a feature');
+      renderState();
+      saveState();
       showMsg(msgs[msgIdx++ % msgs.length]);
     }
 
     function fixBug() {
-      fixes++;
-      document.getElementById('fix-count').textContent = fixes;
-      if (bugs > 0) bugs--;
-      document.getElementById('counter').textContent = bugs;
-      updateStatus();
+      state.fixes++;
+      if (state.bugs > 0) state.bugs--;
+      logHistory('🔧 "fixed" a bug');
+      renderState();
+      saveState();
       const fixMsgs = [
         "bug squashed. three more appeared. classic hydra situation.",
         "fixed. added a comment that says 'this should never happen'.",
@@ -295,15 +486,15 @@
         "the fix is technically worse but it works.",
         "marked as resolved. won't reproduce... for now.",
       ];
-      showMsg(fixMsgs[fixes % fixMsgs.length]);
+      showMsg(fixMsgs[state.fixes % fixMsgs.length]);
     }
 
     function deployProd() {
-      deploys++;
-      document.getElementById('deploy-count').textContent = deploys;
-      bugs += 2;
-      document.getElementById('counter').textContent = bugs;
-      updateStatus();
+      state.deploys++;
+      state.bugs += 2;
+      logHistory('🚀 deployed to prod (recklessly)');
+      renderState();
+      saveState();
       const deployMsgs = [
         "deployed. it's friday at 4:58pm. godspeed.",
         "pushing to prod. notified no one. chaos is a feature.",
@@ -311,19 +502,22 @@
         "LGTM. ship it. we'll know in 10 minutes.",
         "deployed with 0 reviewers. a bold solo move.",
       ];
-      showMsg(deployMsgs[deploys % deployMsgs.length]);
+      showMsg(deployMsgs[state.deploys % deployMsgs.length]);
     }
 
     function standupMode() {
       const box = document.getElementById('standup-box');
-      const s = standups[Math.floor(Math.random() * standups.length)];
+      const s   = standups[Math.floor(Math.random() * standups.length)];
       box.style.display = 'block';
       box.innerHTML = `
         <div><span class="key">Yesterday</span> <span class="val">${s[1]}</span></div>
-        <div><span class="key">Today</span> <span class="val">${s[3]}</span></div>
-        <div><span class="key">Blockers</span> <span class="val" style="color:#e05252">${s[5]}</span></div>
+        <div><span class="key">Today</span>     <span class="val">${s[3]}</span></div>
+        <div><span class="key">Blockers</span>  <span class="val" style="color:#e05252">${s[5]}</span></div>
       `;
     }
+
+    // ── Boot ─────────────────────────────────────────────────────
+    loadState();
   </script>
 </body>
 </html>
