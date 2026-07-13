@@ -380,50 +380,62 @@
     }
 
     // ── JSONBin helpers ──────────────────────────────────────────
+    //
+    // IMPORTANT: JSONBin's v3 API has no "list all bins" endpoint, so the
+    // old findOrCreateBin() was always 404-ing on GET /v3/b, then falling
+    // through to create a *brand new* bin on every single page load —
+    // which also means the counter could never actually be "shared",
+    // since every visitor would silently get their own bin.
+    //
+    // Fix: create the bin exactly once, then hardcode its id below so
+    // every teammate's browser reads/writes the same bin.
+    //
+    // ONE-TIME SETUP (do this once, then redeploy):
+    //   1. Leave BIN_ID as "" and load the page.
+    //   2. Open devtools console — you'll see "Bin created! ID: xxxxx".
+    //   3. Paste that id into BIN_ID below, replacing "".
+    //   4. Commit + push. Now everyone shares this one bin.
 
-    async function findOrCreateBin() {
-      // list bins and find ours by name
-      const listRes = await fetch(`${BASE_URL}/b`, {
-        headers: { [BIN_KEY]: API_KEY }
-      });
-      if (listRes.ok) {
-        const list = await listRes.json();
-        const found = (list || []).find(b => b.snippetMeta && b.snippetMeta.name === BIN_NAME);
-        if (found) return found.snippetMeta.id;
-      }
-
-      // create it
-      const createRes = await fetch(`${BASE_URL}/b`, {
-        method: 'POST',
-        headers: {
-          [BIN_KEY]: API_KEY,
-          'Content-Type': 'application/json',
-          'X-Bin-Name': BIN_NAME,
-          'X-Bin-Private': 'false'
-        },
-        body: JSON.stringify(state)
-      });
-      if (!createRes.ok) throw new Error('could not create bin');
-      const created = await createRes.json();
-      return created.metadata.id;
-    }
+    const BIN_ID = ""; // <-- paste your bin id here after step 1-3 above
 
     async function loadState() {
       setSyncStatus('loading team chaos...', 'syncing');
       setButtons(true);
       try {
-        binId = await findOrCreateBin();
-        const res = await fetch(`${BASE_URL}/b/${binId}/latest`, {
-          headers: { [BIN_KEY]: API_KEY }
-        });
-        if (!res.ok) throw new Error('read failed');
-        const data = await res.json();
-        state = { bugs:0, coffees:0, deploys:0, fixes:0, history:[], ...data.record };
+        if (BIN_ID) {
+          binId = BIN_ID;
+          const res = await fetch(`${BASE_URL}/b/${binId}/latest`, {
+            headers: { [BIN_KEY]: API_KEY }
+          });
+          if (!res.ok) throw new Error(`read failed (${res.status})`);
+          const data = await res.json();
+          state = { bugs:0, coffees:0, deploys:0, fixes:0, history:[], ...data.record };
+        } else {
+          // First-ever run: create the shared bin.
+          const createRes = await fetch(`${BASE_URL}/b`, {
+            method: 'POST',
+            headers: {
+              [BIN_KEY]: API_KEY,
+              'Content-Type': 'application/json',
+              'X-Bin-Name': BIN_NAME,
+              'X-Bin-Private': 'false'
+            },
+            body: JSON.stringify(state)
+          });
+          if (!createRes.ok) throw new Error(`create failed (${createRes.status})`);
+          const created = await createRes.json();
+          binId = created.metadata.id;
+          console.log('🎉 Bin created! Paste this into BIN_ID:', binId);
+          setSyncStatus(`bin created — check console, then set BIN_ID`, 'saved');
+        }
         renderState();
-        setSyncStatus('synced with the team ✓', 'saved');
-        setTimeout(() => setSyncStatus(''), 2000);
+        if (BIN_ID) {
+          setSyncStatus('synced with the team ✓', 'saved');
+          setTimeout(() => setSyncStatus(''), 2000);
+        }
       } catch (e) {
-        setSyncStatus('could not connect — running offline', 'error');
+        console.error(e);
+        setSyncStatus(`could not connect (${e.message}) — running offline`, 'error');
       }
       setButtons(false);
       showMsg('click the bug to see how the day is going');
