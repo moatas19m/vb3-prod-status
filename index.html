@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Production Status Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f0f0f;
+      color: #e8e8e8;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem 1rem;
+    }
+
+    .card {
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 16px;
+      padding: 2.5rem 2rem;
+      max-width: 480px;
+      width: 100%;
+      text-align: center;
+    }
+
+    .eyebrow {
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #555;
+      margin-bottom: 0.5rem;
+    }
+
+    #status-label {
+      font-size: 14px;
+      font-weight: 600;
+      color: #e05252;
+      margin-bottom: 1.75rem;
+      min-height: 20px;
+    }
+
+    .gremlin {
+      font-size: 72px;
+      display: inline-block;
+      cursor: pointer;
+      user-select: none;
+      animation: float 2.4s ease-in-out infinite;
+      line-height: 1;
+    }
+
+    .gremlin.angry { animation: shake 0.08s infinite; }
+
+    @keyframes float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-10px); }
+    }
+    @keyframes shake {
+      0%, 100% { transform: rotate(-3deg); }
+      50% { transform: rotate(3deg); }
+    }
+
+    .counter-wrap { margin: 1.75rem 0 0.3rem; }
+
+    #counter {
+      font-size: 72px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.03em;
+      line-height: 1;
+      color: #e8e8e8;
+      transition: color 0.3s;
+    }
+
+    #counter.high { color: #e05252; }
+
+    .counter-label {
+      font-size: 12px;
+      color: #555;
+      margin-top: 4px;
+    }
+
+    #message {
+      font-size: 14px;
+      color: #888;
+      min-height: 48px;
+      margin: 1.5rem auto;
+      max-width: 360px;
+      line-height: 1.7;
+      font-style: italic;
+      transition: opacity 0.15s;
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin: 1.5rem 0 1rem;
+    }
+
+    button {
+      background: #222;
+      border: 1px solid #333;
+      border-radius: 8px;
+      color: #ccc;
+      font-size: 13px;
+      font-family: inherit;
+      padding: 8px 16px;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    button:hover { background: #2a2a2a; border-color: #444; }
+    button:active { transform: scale(0.97); }
+    button.danger { color: #e05252; border-color: #3a2020; }
+    button.danger:hover { background: #2a1818; border-color: #5a2020; }
+
+    .stats {
+      display: flex;
+      gap: 0;
+      border: 1px solid #2a2a2a;
+      border-radius: 10px;
+      overflow: hidden;
+      margin-top: 1.5rem;
+    }
+
+    .stat {
+      flex: 1;
+      padding: 0.85rem 0.5rem;
+      border-right: 1px solid #2a2a2a;
+    }
+
+    .stat:last-child { border-right: none; }
+
+    .stat-num {
+      font-size: 22px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: #e8e8e8;
+    }
+
+    .stat-lbl {
+      font-size: 11px;
+      color: #555;
+      margin-top: 3px;
+    }
+
+    .standup-btn-wrap { margin-top: 1rem; }
+
+    #standup-box {
+      display: none;
+      margin-top: 1rem;
+      padding: 1rem 1.25rem;
+      background: #111;
+      border: 1px solid #2a2a2a;
+      border-radius: 10px;
+      text-align: left;
+      font-size: 13px;
+      line-height: 1.9;
+    }
+
+    #standup-box .key { color: #666; font-weight: 600; }
+    #standup-box .val { color: #aaa; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <p class="eyebrow">production status</p>
+    <div id="status-label">🔴 EVERYTHING IS FINE</div>
+
+    <div class="gremlin" id="gremlin" onclick="gremlinClick()" title="click me">🐛</div>
+
+    <div class="counter-wrap">
+      <div id="counter">0</div>
+      <div class="counter-label">bugs introduced today</div>
+    </div>
+
+    <div id="message">click the bug to see how the day is going</div>
+
+    <div class="btn-row">
+      <button onclick="addBug()">➕ ship a feature</button>
+      <button onclick="fixBug()">🔧 fix a bug</button>
+      <button class="danger" onclick="deployProd()">🚀 deploy to prod</button>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-num" id="coffee-count">0</div>
+        <div class="stat-lbl">coffees consumed</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num" id="deploy-count">0</div>
+        <div class="stat-lbl">reckless deploys</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num" id="fix-count">0</div>
+        <div class="stat-lbl">bugs "fixed"</div>
+      </div>
+    </div>
+
+    <div class="standup-btn-wrap">
+      <button onclick="standupMode()" style="margin: 0 auto;">🎲 generate standup update</button>
+    </div>
+
+    <div id="standup-box"></div>
+  </div>
+
+  <script>
+    const msgs = [
+      "it's not a bug, it's an undocumented feature with strong opinions.",
+      "the tests are passing. the tests are definitely passing. don't check.",
+      "i have no idea what i'm doing but neither does anyone else, so.",
+      "git blame says it was you. it was always you.",
+      "technically it works on my machine and that's everyone's problem.",
+      "we'll refactor it next sprint. we always say that.",
+      "the documentation says TODO: write documentation.",
+      "there are 17 console.logs in production and they are load-bearing.",
+      "someone deployed on a friday again. you know who you are.",
+      "the real bugs were the friends we made along the way.",
+      "this code was written at 11:47pm. you can tell.",
+      "the stack trace is just vibes at this point.",
+      "i pushed directly to main. i'm not sorry. i'm a little sorry.",
+      "undefined is not a function but honestly neither am i right now.",
+      "ship it. regret it. hotfix it. repeat. this is software.",
+    ];
+
+    const statuses = [
+      ["🟢 totally fine", "#4caf77"],
+      ["🟡 probably fine", "#e0a040"],
+      ["🔴 EVERYTHING IS FINE", "#e05252"],
+      ["☣️ send help", "#e05252"],
+      ["💀 we're in prod", "#e05252"],
+    ];
+
+    const standups = [
+      ["Yesterday", "moved a div 3px to the left for 6 hours.", "Today", "will move it 3px to the right and call it a feature.", "Blockers", "my own hubris."],
+      ["Yesterday", "pushed to main. worked fine locally.", "Today", "production is on fire, will investigate.", "Blockers", "production is on fire."],
+      ["Yesterday", "attended 4 meetings about meetings.", "Today", "attending a meeting to reduce meetings.", "Blockers", "meetings."],
+      ["Yesterday", "wrote 300 lines of code.", "Today", "deleted 290 of them.", "Blockers", "the 10 lines i kept."],
+      ["Yesterday", "fixed a bug from 2019.", "Today", "introduced 3 bugs that are 2019's fault somehow.", "Blockers", "time itself."],
+    ];
+
+    let bugs = 0, coffees = 0, deploys = 0, fixes = 0, msgIdx = 0;
+
+    function updateStatus() {
+      const el = document.getElementById('status-label');
+      const counter = document.getElementById('counter');
+      const idx = Math.min(Math.floor(bugs / 3), statuses.length - 1);
+      el.textContent = statuses[idx][0];
+      el.style.color = statuses[idx][1];
+      counter.className = bugs >= 5 ? 'high' : '';
+    }
+
+    function showMsg(text) {
+      const el = document.getElementById('message');
+      el.style.opacity = '0';
+      setTimeout(() => { el.textContent = text; el.style.opacity = '1'; }, 150);
+    }
+
+    function gremlinClick() {
+      const g = document.getElementById('gremlin');
+      coffees++;
+      document.getElementById('coffee-count').textContent = coffees;
+      g.classList.add('angry');
+      g.textContent = ['🐛','🦗','🪲','💀','🤡'][Math.floor(Math.random() * 5)];
+      setTimeout(() => { g.classList.remove('angry'); g.textContent = '🐛'; }, 800);
+      showMsg(msgs[msgIdx++ % msgs.length]);
+    }
+
+    function addBug() {
+      bugs++;
+      document.getElementById('counter').textContent = bugs;
+      updateStatus();
+      showMsg(msgs[msgIdx++ % msgs.length]);
+    }
+
+    function fixBug() {
+      fixes++;
+      document.getElementById('fix-count').textContent = fixes;
+      if (bugs > 0) bugs--;
+      document.getElementById('counter').textContent = bugs;
+      updateStatus();
+      const fixMsgs = [
+        "bug squashed. three more appeared. classic hydra situation.",
+        "fixed. added a comment that says 'this should never happen'.",
+        "closed the ticket. opened two more. growth mindset.",
+        "the fix is technically worse but it works.",
+        "marked as resolved. won't reproduce... for now.",
+      ];
+      showMsg(fixMsgs[fixes % fixMsgs.length]);
+    }
+
+    function deployProd() {
+      deploys++;
+      document.getElementById('deploy-count').textContent = deploys;
+      bugs += 2;
+      document.getElementById('counter').textContent = bugs;
+      updateStatus();
+      const deployMsgs = [
+        "deployed. it's friday at 4:58pm. godspeed.",
+        "pushing to prod. notified no one. chaos is a feature.",
+        "rollback plan: vibes. let's go.",
+        "LGTM. ship it. we'll know in 10 minutes.",
+        "deployed with 0 reviewers. a bold solo move.",
+      ];
+      showMsg(deployMsgs[deploys % deployMsgs.length]);
+    }
+
+    function standupMode() {
+      const box = document.getElementById('standup-box');
+      const s = standups[Math.floor(Math.random() * standups.length)];
+      box.style.display = 'block';
+      box.innerHTML = `
+        <div><span class="key">Yesterday</span> <span class="val">${s[1]}</span></div>
+        <div><span class="key">Today</span> <span class="val">${s[3]}</span></div>
+        <div><span class="key">Blockers</span> <span class="val" style="color:#e05252">${s[5]}</span></div>
+      `;
+    }
+  </script>
+</body>
+</html>
